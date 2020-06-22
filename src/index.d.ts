@@ -1,6 +1,17 @@
 export type Initializer<T> = () => T;
 
-export default function istate<T>(defaultValue: Initializer<T> | T): State<T>;
+export interface DefaultExport extends Function {
+  <T>(defaultValue: Initializer<T> | T): State<T>;
+  from<T>(
+    subscribable: {subscribe: Function},
+    defaultValue: Initializer<T> | T,
+    transform: (...args: any[]) => any,
+  ): State<T>;
+}
+
+declare const istate: DefaultExport;
+
+export default istate;
 
 export interface State<T> extends Api<T> {
   /**

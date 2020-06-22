@@ -3,6 +3,7 @@ import iscope from 'iscope';
 import createArrayKeyedMap from './createArrayKeyedMap';
 
 const unset = {};
+const identity = (x) => x;
 const stateScope = iscope(() => undefined);
 
 export default function istate(defaultValue) {
@@ -26,6 +27,21 @@ export default function istate(defaultValue) {
     },
   );
 }
+
+Object.assign(istate, {
+  from(subscribable, defaultValue, transform = identity) {
+    const state = istate(defaultValue);
+    const listener = (...args) => state.set(transform(...args));
+    if (typeof subscribable.subscribe === 'function') {
+      subscribable.subscribe(listener);
+    } else if (typeof subscribable === 'function') {
+      subscribable(listener);
+    } else {
+      throw new Error('Invalid subscribable object');
+    }
+    return state;
+  },
+});
 
 function createState(initializer, args) {
   let changed = false;
