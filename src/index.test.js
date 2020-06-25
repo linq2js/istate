@@ -1,7 +1,9 @@
-import istate from 'istate';
+import state from 'istate';
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('simple state', () => {
-  const Count = istate(0);
+  const Count = state(0);
   const Increase = () => {
     const [count, setCount] = Count();
     setCount(count + 1);
@@ -12,8 +14,22 @@ test('simple state', () => {
   expect(Count.get()).toBe(3);
 });
 
+test('async state', async () => {
+  const Count = state(async () => {
+    await delay(10);
+    return 1;
+  });
+  const Increase = async () => {
+    const [count, setCount] = await Count();
+    setCount(count + 1);
+  };
+
+  await Increase();
+  expect(Count.get()).toBe(2);
+});
+
 test('reset state', () => {
-  const Count = istate(0);
+  const Count = state(0);
   const Increase = () => {
     const [count, setCount] = Count();
     setCount(count + 1);
@@ -31,8 +47,8 @@ test('reset state', () => {
 test('handle state change', () => {
   const countChange = jest.fn();
   const doubleChange = jest.fn();
-  const Count = istate(1);
-  const Double = istate(() => {
+  const Count = state(1);
+  const Double = state(() => {
     const [count] = Count();
     return count * 2;
   });
@@ -52,7 +68,7 @@ test('handle state change', () => {
 
 test('throw an error if got error during evaluating state', () => {
   const evalState = jest.fn();
-  const Count = istate(() => {
+  const Count = state(() => {
     evalState();
     throw new Error();
   });
@@ -62,11 +78,40 @@ test('throw an error if got error during evaluating state', () => {
 });
 
 test('state family', () => {
-  const Numbers = istate(() => 1);
+  const Numbers = state(() => 1);
   expect(Numbers.family(0).get()).toBe(1);
   expect(Numbers.family(1000).get()).toBe(1);
   Numbers.family(0).set(2);
   Numbers.family(1000).set(4);
   expect(Numbers.family(0).get()).toBe(2);
   expect(Numbers.family(1000).get()).toBe(4);
+});
+
+test('using state builder', () => {
+  const style = state.builder({map: (value) => 'style: ' + value});
+  const textColor = style('red');
+  expect(textColor.get()).toBe('style: red');
+  textColor.set('blue');
+  expect(textColor.get()).toBe('style: blue');
+});
+
+test('using object state', () => {
+  const original = {value: 1};
+  const obj = state.object(original);
+  obj.set({value: 1});
+  expect(obj.get()).toBe(original);
+});
+
+test('using array state', () => {
+  const original = [1, 2, 3];
+  const obj = state.array(original);
+  obj.set([1, 2, 3]);
+  expect(obj.get()).toBe(original);
+});
+
+test('using date state', () => {
+  const original = new Date();
+  const obj = state.array(original);
+  obj.set(new Date(original.getTime()));
+  expect(obj.get()).toBe(original);
 });
