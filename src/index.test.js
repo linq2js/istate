@@ -1,4 +1,4 @@
-import state from 'istate';
+import state, {getStateList} from 'istate';
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -114,4 +114,40 @@ test('using date state', () => {
   const obj = state.array(original);
   obj.set(new Date(original.getTime()));
   expect(obj.get()).toBe(original);
+});
+
+test('getStateList', () => {
+  expect(getStateList([])).toEqual({
+    valid: true,
+    multiple: true,
+    states: [],
+  });
+
+  expect(getStateList(false)).toEqual({
+    valid: false,
+    multiple: false,
+    states: [],
+  });
+
+  expect(getStateList(state())).toEqual({
+    valid: true,
+    multiple: false,
+    states: expect.anything(),
+  });
+
+  expect(getStateList([state(), state()])).toEqual({
+    valid: true,
+    multiple: true,
+    states: expect.anything(),
+  });
+});
+
+test('from', () => {
+  const Count = state(1);
+  const Double = state.from([Count], (count) => count * 2);
+  const ValueArray = state.from([Count, Double]);
+  const ValueObject = state.from({count: Count, double: Double});
+  expect(Double.get()).toEqual(2);
+  expect(ValueArray.get()).toEqual([1, 2]);
+  expect(ValueObject.get()).toEqual({count: 1, double: 2});
 });

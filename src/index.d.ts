@@ -1,13 +1,12 @@
-export type Initializer<T> = () => T;
+export default istate;
+export function createEmitter(): Emitter;
+export function getStateList(value: any): StateList;
 
-export interface DefaultExport extends Function {
-  <T>(defaultValue: Initializer<T> | T, options?: StateOptions<T>): State<T>;
-  from<T>(
-    subscribable: {subscribe: Function},
-    defaultValue?: Initializer<T> | T,
-    transform?: (...args: any[]) => any,
-    options?: StateOptions<T>,
-  ): State<T>;
+declare const istate: DefaultBuilder;
+
+type Initializer<T> = () => T;
+
+interface DefaultBuilder extends Function, StateBuilder<any> {
   object<T>(
     defaultValue: Initializer<T> | T,
     options?: StateOptions<T>,
@@ -25,18 +24,28 @@ export interface DefaultExport extends Function {
   ): <T>(defaultValue: Initializer<T> | T) => State<T>;
 }
 
-declare const istate: DefaultExport;
+interface StateBuilder<T> {
+  <T>(defaultValue: Initializer<T> | T, options?: StateOptions<T>): State<T>;
+  from(states: State<any>[]): State<any[]>;
+  from(states: StateMap): State<{[key: string]: any}>;
+  from<T>(
+    states: State<any> | State<any>[],
+    selector: (...args: any[]) => T,
+  ): State<T>;
+}
 
-export default istate;
+interface StateMap {
+  [key: string]: State<any>;
+}
 
-export type Comparer<T> = (a: T, b: T) => boolean;
+type Comparer<T> = (a: T, b: T) => boolean;
 
-export interface StateOptions<T> {
+interface StateOptions<T> {
   map?(value: any): T;
   type?: 'object' | 'array' | Comparer<T>;
 }
 
-export interface State<T> extends Api<T> {
+interface State<T> extends Api<T> {
   /**
    * get state api [currentValue, updateStateFn]
    * @param args
@@ -50,7 +59,7 @@ export interface State<T> extends Api<T> {
   family<T>(...args: any[]): State<T>;
 }
 
-export interface Setter<T> extends Function {
+interface Setter<T> extends Function {
   /**
    * update state value using reducer
    * @param reducer
@@ -64,11 +73,11 @@ export interface Setter<T> extends Function {
   (value: T): void;
 }
 
-export interface Getter<T> extends Function {
+interface Getter<T> extends Function {
   (): T;
 }
 
-export interface Api<T> extends Setter<T> {
+interface Api<T> extends Setter<T> {
   /**
    * reset state to initial value
    */
@@ -88,16 +97,24 @@ export interface Api<T> extends Setter<T> {
    * @param subscription
    */
   subscribe(subscription: Subscription): Unsubscribe;
+  watch<T>(
+    subscribable: {subscribe: Function},
+    transform?: (...args: any[]) => T,
+  ): State<T>;
 }
 
-export type Subscription = () => any;
+type Subscription = () => any;
 
-export type Unsubscribe = () => void;
+type Unsubscribe = () => void;
 
-export function createEmitter(): Emitter;
-
-export interface Emitter {
+interface Emitter {
   on(event: string, subscription: Subscription): Unsubscribe;
   emit(event: string, params?: any): void;
   clear(): void;
+}
+
+interface StateList {
+  valid: boolean;
+  multiple: boolean;
+  states: State<any>[];
 }

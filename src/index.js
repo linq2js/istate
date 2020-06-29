@@ -67,25 +67,102 @@ export default function istate(defaultValue, options) {
   );
 }
 
-function from(subscribable, defaultValue, transform = identity, options) {
-  const state = istate(defaultValue, options);
-  const listener = (...args) => state.set(transform(...args));
-  if (typeof subscribable.subscribe === 'function') {
-    subscribable.subscribe(listener);
-  } else if (typeof subscribable === 'function') {
-    subscribable(listener);
-  } else {
-    throw new Error('Invalid subscribable object');
+export function getStateList(value) {
+  if (
+    value &&
+    (value[metaPropName] === 'state' || value[metaPropName] === 'api')
+  ) {
+    return {
+      valid: true,
+      multiple: false,
+      states: [value.state || value],
+    };
   }
-  return state;
+  if (Array.isArray(value)) {
+    let valid = true;
+    const states = value.map((item) => {
+      const subStates = getStateList(item);
+      if (!subStates.valid) {
+        valid = false;
+      }
+      return subStates.states[0];
+    });
+    return {
+      valid,
+      multiple: true,
+      states,
+    };
+  }
+  return {
+    valid: false,
+    multiple: false,
+    states: [],
+  };
+}
+
+function createFromUtil(builder) {
+  return function (states, selector) {
+    const stateList = getStateList(states);
+    // from(stateArray)
+    // from(stateMap)
+    if (!selector) {
+      // from(stateArray)
+      if (stateList.valid && stateList.multiple) {
+        return builder(
+          () => {
+            return stateList.states.map((state) => state.get());
+          },
+          {
+            type: 'array',
+          },
+        );
+      }
+
+      // from(stateMap)
+      const entries = Object.entries(states).map(([key, state]) => {
+        const subStateList = getStateList(state);
+        if (!subStateList.valid) {
+          throw new Error('Invalid input state');
+        }
+        return [key, subStateList.states[0]];
+      });
+
+      return builder(() => {
+        const result = {};
+        entries.forEach(
+          ([key, state]) => {
+            result[key] = state.get();
+          },
+          {type: 'object'},
+        );
+        return result;
+      });
+    }
+
+    if (!stateList.valid) {
+      throw new Error('Invalid input state');
+    }
+    return createStateFromOtherStates(builder, stateList.states, selector);
+  };
+}
+
+function createStateFromOtherStates(builder, states, selector) {
+  return builder(() => {
+    const values = states.map((state) => state.get());
+    return selector(...values);
+  });
 }
 
 function builder(builderOptions) {
-  return (value, options) => istate(value, {...builderOptions, ...options});
+  const builder = (value, options) =>
+    istate(value, {...builderOptions, ...options});
+  return Object.assign(builder, {
+    from: createFromUtil(builder),
+  });
 }
 
 Object.assign(istate, {
-  from,
+  from: createFromUtil(istate),
   builder,
   object: (value, options) => istate(value, {type: 'object', ...options}),
   array: (value, options) => istate(value, {type: 'array', ...options}),
@@ -95,7 +172,7 @@ function createState(initializer, args, options) {
   let changed = false;
   let originalValue = unset;
   let shouldEvaluate = true;
-  const {map, type, dispose} = options || {};
+  const {map, type, dispose, readonly} = options || {};
   const isEqual =
     typeof type === 'function'
       ? type
@@ -104,14 +181,9 @@ function createState(initializer, args, options) {
     [metaPropName]: 'api',
   });
   const emitter = createEmitter();
-  const subStates = new Set();
+  const childStates = new Set();
   const childStateChangingListeners = [];
   const state = () => {
-    // get parent state
-    const parentStateContext = stateScope();
-    if (parentStateContext) {
-      parentStateContext.addChildState(state);
-    }
     get();
     // is async state value
     if (api[0] && typeof api[0].then === 'function') {
@@ -133,6 +205,12 @@ function createState(initializer, args, options) {
   };
 
   function get() {
+    // get parent state
+    const parentStateContext = stateScope();
+    if (parentStateContext) {
+      parentStateContext.addChildState(state);
+    }
+
     if (shouldEvaluate) {
       try {
         if (api[0] !== unset && dispose) {
@@ -154,19 +232,17 @@ function createState(initializer, args, options) {
     return api[0];
   }
 
-  function handleSubStateChange() {
+  function handleChildStateChange() {
     if (!changed) {
-      shouldEvaluate = true;
-      childStateChangingListeners.forEach((unsubscribe) => unsubscribe());
-      emitter.emit('change');
+      reset();
     }
   }
 
   function addChildState(subState) {
-    if (!subStates.has(subState)) {
-      subStates.add(subState);
+    if (!childStates.has(subState)) {
+      childStates.add(subState);
       childStateChangingListeners.push(
-        subState.subscribe(handleSubStateChange),
+        subState.subscribe(handleChildStateChange),
       );
     }
   }
@@ -175,9 +251,23 @@ function createState(initializer, args, options) {
     return emitter.on('change', subscription);
   }
 
+  function watch(subscribable, transform) {
+    const listener = (...args) => set(transform(...args));
+    if (typeof subscribable.subscribe === 'function') {
+      subscribable.subscribe(listener);
+    } else if (typeof subscribable === 'function') {
+      subscribable(listener);
+    } else {
+      throw new Error('Invalid subscribable object');
+    }
+    return state;
+  }
+
   function reset() {
     shouldEvaluate = true;
     changed = false;
+    childStateChangingListeners.forEach((unsubscribe) => unsubscribe());
+    childStates.clear();
     emitter.emit('change');
   }
 
@@ -208,7 +298,11 @@ function createState(initializer, args, options) {
     get,
     reset,
     subscribe,
+    watch,
+    state,
   });
+
+  api.state = state;
 
   return Object.assign(state, {
     [metaPropName]: 'state',
@@ -216,6 +310,8 @@ function createState(initializer, args, options) {
     get,
     reset,
     subscribe,
+    watch,
+    options,
   });
 }
 
