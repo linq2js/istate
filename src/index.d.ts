@@ -74,7 +74,7 @@ interface Setter<T> extends Function {
 }
 
 interface Getter<T> extends Function {
-  (): T;
+  (...args: any): T;
 }
 
 interface Api<T> extends Setter<T> {

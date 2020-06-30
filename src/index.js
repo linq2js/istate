@@ -62,6 +62,9 @@ export default function istate(defaultValue, options) {
     },
     {
       ...defaultState,
+      get(...args) {
+        return args.length ? getStateByArgs(args).get() : defaultState.get();
+      },
       family: (...args) => getStateByArgs(args),
     },
   );

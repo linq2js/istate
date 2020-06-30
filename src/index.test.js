@@ -163,3 +163,22 @@ test('loadable of state', async () => {
   expect(value.loadable.state).toBe('hasValue');
   expect(value.loadable.value).toBe(100);
 });
+
+test('async api', async () => {
+  const state1 = state(async (multiplyBy = 1) => {
+    await delay(10);
+    return multiplyBy;
+  });
+  const state2 = state(async (multiplyBy = 1) => {
+    await delay(10);
+    return 2 * multiplyBy;
+  });
+  const [state1Value, setState1Value] = await state1();
+  const [state2Value, setState2Value] = await state2();
+  const values = await Promise.all([state1.get(2), state2.get(2)]);
+  expect(state1Value).toBe(1);
+  expect(state2Value).toBe(2);
+  expect(typeof setState1Value).toBe('function');
+  expect(typeof setState2Value).toBe('function');
+  expect(values).toEqual([2, 4]);
+});
