@@ -151,3 +151,15 @@ test('from', () => {
   expect(ValueArray.get()).toEqual([1, 2]);
   expect(ValueObject.get()).toEqual({count: 1, double: 2});
 });
+
+test('loadable of state', async () => {
+  const AsyncState = state(async () => {
+    await delay(10);
+    return 100;
+  });
+  const value = AsyncState.get();
+  expect(value.loadable.state).toBe('loading');
+  await value;
+  expect(value.loadable.state).toBe('hasValue');
+  expect(value.loadable.value).toBe(100);
+});

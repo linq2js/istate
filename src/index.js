@@ -218,6 +218,9 @@ function createState(initializer, args, options) {
         }
         originalValue = stateScope({addChildState}, () => initializer(...args));
         api[0] = map ? map(originalValue) : originalValue;
+        if (api[0] && typeof api[0].then === 'function') {
+          enableLoadableLogic(api[0]);
+        }
       } catch (e) {
         api[0] = e;
       } finally {
@@ -288,6 +291,9 @@ function createState(initializer, args, options) {
       }
       originalValue = nextValue;
       api[0] = map ? map(originalValue) : originalValue;
+      if (api[0] && typeof api[0].then === 'function') {
+        enableLoadableLogic(api[0]);
+      }
       changed = true;
       emitter.emit('change');
     }
@@ -340,4 +346,63 @@ export function createEmitter() {
       eventListeners = {};
     },
   };
+}
+
+export function enableLoadableLogic(promise) {
+  Object.defineProperty(promise, 'loadable', {
+    get() {
+      if (promise.__loadable) {
+        return promise.__loadable;
+      }
+      let loadable = {
+        state: 'loading',
+        value: undefined,
+        error: undefined,
+      };
+
+      const emitter = createEmitter();
+      let sameThread = true;
+
+      function subscribe(subscription) {
+        return emitter.on('done', subscription);
+      }
+
+      promise
+        .then(
+          (payload) => {
+            loadable = {
+              state: 'hasValue',
+              value: payload,
+            };
+          },
+          (error) => {
+            loadable = {
+              state: 'error',
+              error,
+            };
+          },
+        )
+        .finally(() => {
+          if (!sameThread) {
+            emitter.emit('done');
+          }
+        });
+      sameThread = false;
+
+      return (promise.__loadable = {
+        get state() {
+          return loadable.state;
+        },
+        get value() {
+          return loadable.value;
+        },
+        get error() {
+          return loadable.error;
+        },
+        subscribe,
+      });
+    },
+  });
+
+  return promise;
 }
