@@ -1,6 +1,7 @@
 import state, {getStateList} from 'istate';
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const delay = (ms, value) =>
+  new Promise((resolve) => setTimeout(resolve, ms, value));
 
 test('simple state', () => {
   const Count = state(0);
@@ -181,4 +182,118 @@ test('async api', async () => {
   expect(typeof setState1Value).toBe('function');
   expect(typeof setState2Value).toBe('function');
   expect(values).toEqual([2, 4]);
+});
+
+test('generator', () => {
+  const subscription = jest.fn();
+  const stream = state(function* () {
+    const next = yield 'first';
+    yield next;
+    return 'third';
+  });
+  stream.subscribe(subscription);
+  expect(stream.get()).toBe('first');
+  stream.next('second');
+  expect(stream.get()).toBe('second');
+  stream.next();
+  expect(stream.get()).toBe('third');
+  stream.next();
+  expect(stream.get()).toBe('third');
+  expect(subscription).toBeCalledTimes(2);
+});
+
+test('async generator', async () => {
+  const subscription = jest.fn();
+  const stream = state(async function* () {
+    await delay(10);
+    const next = yield 'first';
+    await delay(10);
+    yield next;
+    await delay(10);
+    return 'third';
+  });
+  stream.subscribe(subscription);
+  expect(await stream.get()).toBe('first');
+  const n1 = stream.next('second');
+  const s1 = stream.get();
+  const n2 = stream.next();
+  const s2 = stream.get();
+  expect(await s1).toBe('second');
+  expect(await s2).toBe('third');
+  stream.next();
+  expect(await stream.get()).toBe(undefined);
+  // console.log(await n1, await n2);
+  expect(await n1).toBe(true);
+  expect(await n2).toBe(false);
+  expect(subscription).toBeCalledTimes(3);
+});
+
+test('func', () => {
+  const stream = state(() => (a, b) => a + b, {defaultValue: 1});
+  expect(stream.get()).toBe(1);
+  expect(stream.next(1, 2)).toBe(true);
+  expect(stream.get()).toBe(3);
+});
+
+test('generator with child state', () => {
+  const parent = state(function* () {
+    yield child1.get();
+    yield child2.get();
+  });
+  const child1 = state(1);
+  const child2 = state(2);
+
+  expect(parent.get()).toBe(1);
+  parent.next();
+  expect(parent.get()).toBe(2);
+  child1.set(3);
+  expect(parent.get()).toBe(3);
+  parent.next();
+  expect(parent.get()).toBe(2);
+});
+
+test('map(mapper)', () => {
+  const original = state(1);
+  const double = original.map((value) => value * 2);
+
+  expect(double.get()).toBe(2);
+
+  original.set(5);
+
+  expect(double.get()).toBe(10);
+});
+
+test('map(prop)', () => {
+  const original = state({email: 'abc@def.com', country: 'USA'});
+  const email = original.map('email');
+  const country = original.map('country');
+
+  expect(email.get()).toBe(original.get().email);
+  expect(country.get()).toBe(original.get().country);
+});
+
+test('async map()', async () => {
+  const original = state(() => delay(10, 100));
+  const double = original.map((value) => value * 2);
+  expect(await double.get()).toBe(200);
+});
+
+test('reduce()', () => {
+  const original = state(1);
+  const list = original.reduce((seed, value) => seed.concat(value), []);
+  expect(list.get()).toEqual([1]);
+  original.set(2);
+  expect(list.get()).toEqual([1, 2]);
+  original.set(3);
+  expect(list.get()).toEqual([1, 2, 3]);
+});
+
+test('filter()', () => {
+  const original = state(1);
+  const even = original.filter((value) => value % 2 === 0, 0);
+  expect(even.get()).toBe(0);
+  original.set(4);
+  expect(even.get()).toBe(4);
+  original.set(3);
+  expect(even.get()).toBe(4);
 });

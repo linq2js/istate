@@ -3,9 +3,8 @@ import createArrayKeyedMap from './createArrayKeyedMap';
 
 const metaPropName = '__istate';
 const unset = {};
-const identity = (x) => x;
 const stateScope = iscope(() => undefined);
-const equalityComparers = {
+const compareFunctions = {
   default(a, b) {
     return a === b;
   },
@@ -175,21 +174,24 @@ function createState(initializer, args, options) {
   let changed = false;
   let originalValue = unset;
   let shouldEvaluate = true;
-  const {map, type, dispose, readonly} = options || {};
+  let iterator;
+  let lastValue = unset;
+  const {map, type, dispose, defaultValue} = options || {};
   const isEqual =
     typeof type === 'function'
       ? type
-      : equalityComparers[type] || equalityComparers.default;
+      : compareFunctions[type] || compareFunctions.default;
   const api = Object.assign([unset, set], {
     [metaPropName]: 'api',
   });
   const emitter = createEmitter();
   const childStates = new Set();
   const childStateChangingListeners = [];
+  const context = {addChildState};
   const state = () => {
     get();
     // is async state value
-    if (api[0] && typeof api[0].then === 'function') {
+    if (isPromiseLike(api[0])) {
       // make api like promise
       return Object.assign(
         api[0].then((result) =>
@@ -219,9 +221,23 @@ function createState(initializer, args, options) {
         if (api[0] !== unset && dispose) {
           dispose(api[0]);
         }
-        originalValue = stateScope({addChildState}, () => initializer(...args));
-        api[0] = map ? map(originalValue) : originalValue;
-        if (api[0] && typeof api[0].then === 'function') {
+        originalValue = stateScope(context, () => initializer(...args));
+        let result = map ? map(originalValue) : originalValue;
+        // is iterator
+        if (result && typeof result.next === 'function') {
+          iterator = result;
+          result = stateScope(context, () => iterator.next());
+          if (isPromiseLike(result)) {
+            result = result.then(({value}) => value);
+          } else {
+            result = result.value;
+          }
+        } else if (typeof result === 'function') {
+          iterator = result;
+          result = defaultValue;
+        }
+        api[0] = result;
+        if (isPromiseLike(api[0])) {
           enableLoadableLogic(api[0]);
         }
       } catch (e) {
@@ -272,17 +288,46 @@ function createState(initializer, args, options) {
   function reset() {
     shouldEvaluate = true;
     changed = false;
+    iterator = undefined;
     childStateChangingListeners.forEach((unsubscribe) => unsubscribe());
     childStates.clear();
     emitter.emit('change');
   }
 
-  function set(nextValue) {
-    const parentStateContext = stateScope();
-    if (parentStateContext) {
-      throw new Error('Cannot change state inside other state');
-    }
+  function handleIteratorResult(nextValue) {
+    update(nextValue, true);
+  }
+
+  function next(...args) {
     get();
+
+    if (!iterator) {
+      return false;
+    }
+    let result;
+    if (typeof iterator === 'function') {
+      result = iterator(...args);
+      handleIteratorResult(result);
+      return true;
+    } else {
+      let iteratorResult = stateScope(context, () => iterator.next(args[0]));
+      if (isPromiseLike(iteratorResult)) {
+        result = iteratorResult.then(({value}) => value);
+        handleIteratorResult(result);
+        return iteratorResult.then(({done}) => !done);
+      } else {
+        if (iterator.__done) {
+          return false;
+        }
+        const {value, done} = iteratorResult;
+        iterator.__done = done;
+        handleIteratorResult(value);
+        return !done;
+      }
+    }
+  }
+
+  function update(nextValue, internalChange) {
     const prevValue = originalValue;
     if (typeof nextValue === 'function') {
       nextValue = nextValue(prevValue);
@@ -294,12 +339,64 @@ function createState(initializer, args, options) {
       }
       originalValue = nextValue;
       api[0] = map ? map(originalValue) : originalValue;
-      if (api[0] && typeof api[0].then === 'function') {
+      if (isPromiseLike(api[0])) {
         enableLoadableLogic(api[0]);
       }
-      changed = true;
+      if (!internalChange) {
+        changed = true;
+      }
       emitter.emit('change');
     }
+  }
+
+  function set(nextValue) {
+    const parentStateContext = stateScope();
+    if (parentStateContext) {
+      throw new Error('Cannot change state inside other state');
+    }
+    get();
+    update(nextValue, false);
+  }
+
+  function processResult(result, args) {
+    return typeof result === 'function' ? result(...args) : result;
+  }
+
+  function filterState(predicate, prev) {
+    return istate((...args) => {
+      const value = get();
+      if (processResult(predicate(value), args)) {
+        return (prev = value);
+      }
+      return prev;
+    });
+  }
+
+  function mapState(mapper) {
+    if (typeof mapper !== 'function') {
+      const prop = mapper;
+      mapper = (value) =>
+        typeof value === 'undefined' || value === null ? value : value[prop];
+    }
+    return istate((...args) => {
+      const value = get();
+      if (isPromiseLike(value)) {
+        return value.then((result) => processResult(mapper(result), args));
+      }
+      return processResult(mapper(value), args);
+    });
+  }
+
+  function reduceState(reducer, prev) {
+    if (arguments.length < 2) {
+      prev = unset;
+    }
+    return mapState((current) => {
+      if (prev === unset) {
+        prev = current;
+      }
+      return (...args) => (prev = processResult(reducer(prev, current), args));
+    });
   }
 
   Object.assign(set, {
@@ -309,6 +406,7 @@ function createState(initializer, args, options) {
     subscribe,
     watch,
     state,
+    next,
   });
 
   api.state = state;
@@ -318,8 +416,12 @@ function createState(initializer, args, options) {
     set,
     get,
     reset,
+    next,
     subscribe,
     watch,
+    map: mapState,
+    reduce: reduceState,
+    filter: filterState,
     options,
   });
 }
@@ -408,4 +510,8 @@ export function enableLoadableLogic(promise) {
   });
 
   return promise;
+}
+
+function isPromiseLike(value) {
+  return value && typeof value.then === 'function';
 }

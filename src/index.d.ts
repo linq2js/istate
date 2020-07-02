@@ -7,25 +7,19 @@ declare const istate: DefaultBuilder;
 type Initializer<T> = () => T;
 
 interface DefaultBuilder extends Function, StateBuilder<any> {
-  object<T>(
-    defaultValue: Initializer<T> | T,
-    options?: StateOptions<T>,
-  ): State<T>;
-  array<T>(
-    defaultValue: Initializer<T> | T,
-    options?: StateOptions<T>,
-  ): State<T>;
+  object<T>(initial: Initializer<T> | T, options?: StateOptions<T>): State<T>;
+  array<T>(initial: Initializer<T> | T, options?: StateOptions<T>): State<T>;
   date(
-    defaultValue: Initializer<Date> | Date,
+    initial: Initializer<Date> | Date,
     options?: StateOptions<Date>,
   ): State<Date>;
   builder<T>(
     options?: StateOptions<T>,
-  ): <T>(defaultValue: Initializer<T> | T) => State<T>;
+  ): <T>(initial: Initializer<T> | T) => State<T>;
 }
 
 interface StateBuilder<T> {
-  <T>(defaultValue: Initializer<T> | T, options?: StateOptions<T>): State<T>;
+  <T>(initial: Initializer<T> | T, options?: StateOptions<T>): State<T>;
   from(states: State<any>[]): State<any[]>;
   from(states: StateMap): State<{[key: string]: any}>;
   from<T>(
@@ -41,6 +35,7 @@ interface StateMap {
 type Comparer<T> = (a: T, b: T) => boolean;
 
 interface StateOptions<T> {
+  defaultValue?: T;
   map?(value: any): T;
   type?: 'object' | 'array' | Comparer<T>;
 }
@@ -57,6 +52,9 @@ interface State<T> extends Api<T> {
    * @param args
    */
   family<T>(...args: any[]): State<T>;
+  map<U>(mapper: ((value: T, ...args: any[]) => U) | any): State<U>;
+  reduce<U>(reducer: (prev: U, current: T) => U, seed?: U): State<U>;
+  filter(predicate: (value: T) => boolean, defaultValue?: T): State<T>;
 }
 
 interface Setter<T> extends Function {
@@ -74,7 +72,7 @@ interface Setter<T> extends Function {
 }
 
 interface Getter<T> extends Function {
-  (...args: any): T;
+  (...args: any[]): T;
 }
 
 interface Api<T> extends Setter<T> {
@@ -91,7 +89,7 @@ interface Api<T> extends Setter<T> {
    * get state value
    */
   get: Getter<T>;
-
+  next(...args): any;
   /**
    * listen state value changing
    * @param subscription
