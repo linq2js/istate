@@ -175,7 +175,8 @@ function createState(initializer, args, options) {
   let originalValue = unset;
   let shouldEvaluate = true;
   let iterator;
-  let lastValue = unset;
+  let stateChangedPromise;
+  let stateChangedResolve;
   const {map, type, dispose, defaultValue} = options || {};
   const isEqual =
     typeof type === 'function'
@@ -228,9 +229,14 @@ function createState(initializer, args, options) {
           iterator = result;
           result = stateScope(context, () => iterator.next());
           if (isPromiseLike(result)) {
-            result = result.then(({value}) => value);
+            result = result.then(({value}) =>
+              typeof value === 'function' ? value() : value,
+            );
           } else {
-            result = result.value;
+            result =
+              typeof result.value === 'function'
+                ? result.value()
+                : result.value;
           }
         } else if (typeof result === 'function') {
           iterator = result;
@@ -292,39 +298,125 @@ function createState(initializer, args, options) {
     childStateChangingListeners.forEach((unsubscribe) => unsubscribe());
     childStates.clear();
     emitter.emit('change');
+    stateChangedResolve && stateChangedResolve();
+    stateChangedPromise = undefined;
   }
 
-  function handleIteratorResult(nextValue) {
-    update(nextValue, true);
+  function processIteratorResult(nextValue) {
+    return update(nextValue, true);
+  }
+
+  function processFunction(iterator, result) {
+    const updated = processIteratorResult(result);
+    // always trigger change event when function executed
+    if (!updated) {
+      emitter.emit('change');
+    }
+    if (isPromiseLike(result)) {
+      return result.then(() => true);
+    }
+    return true;
+  }
+
+  function processAsyncIterator(iterator, result) {
+    const valuePromise = result.then(({value}) => value);
+    const donePromise = result.then(({done}) => !done);
+    processIteratorResult(valuePromise);
+    return donePromise;
+  }
+
+  function processSyncIterator(iterator, result) {
+    if (iterator.__done) {
+      return false;
+    }
+    const {value, done} = result;
+    iterator.__done = done;
+    processIteratorResult(value);
+    return !done;
   }
 
   function next(...args) {
+    return internalNext(args, (iterator, result, type) => {
+      if (type === 'function') {
+        return processFunction(iterator, result, type);
+      }
+
+      if (type === 'async-iterator') {
+        return processAsyncIterator(iterator, result);
+      }
+
+      // sync-iterator
+      return processSyncIterator(iterator, result);
+    });
+  }
+
+  function internalNext(args, resolver) {
     get();
 
     if (!iterator) {
       return false;
     }
-    let result;
+
     if (typeof iterator === 'function') {
-      result = iterator(...args);
-      handleIteratorResult(result);
-      return true;
-    } else {
-      let iteratorResult = stateScope(context, () => iterator.next(args[0]));
-      if (isPromiseLike(iteratorResult)) {
-        result = iteratorResult.then(({value}) => value);
-        handleIteratorResult(result);
-        return iteratorResult.then(({done}) => !done);
-      } else {
-        if (iterator.__done) {
-          return false;
-        }
-        const {value, done} = iteratorResult;
-        iterator.__done = done;
-        handleIteratorResult(value);
-        return !done;
-      }
+      return resolver(iterator, iterator(...args), 'function');
     }
+
+    let iteratorResult = stateScope(context, () => iterator.next(args[0]));
+    if (isPromiseLike(iteratorResult)) {
+      return resolver(iterator, iteratorResult, 'async-iterator');
+    }
+
+    return resolver(iterator, iteratorResult, 'sync-iterator');
+  }
+
+  function last(...args) {
+    get();
+    if (!iterator) {
+      return api[0];
+    }
+    if (typeof iterator === 'function') {
+      throw new Error('Cannot use last() with functional state');
+    }
+
+    let parentToken;
+
+    function doNext() {
+      const result = iterator.next(args[0]);
+      if (isPromiseLike(result)) {
+        const token = {
+          parent: parentToken,
+        };
+        parentToken = token;
+        return enableCancellableLogic(
+          result.then((asyncResult) => {
+            let value = asyncResult.value;
+            if (typeof value === 'function') {
+              if (token.isCancelled()) {
+                return api[0];
+              }
+              value = value();
+            }
+            if (asyncResult.done) {
+              return value;
+            }
+            return doNext(value);
+          }),
+          token,
+        );
+      }
+
+      if (result.done) {
+        return result.value;
+      }
+
+      return doNext(result.value);
+    }
+
+    const lastResult = doNext();
+
+    update(lastResult, true);
+
+    return lastResult;
   }
 
   function update(nextValue, internalChange) {
@@ -345,8 +437,12 @@ function createState(initializer, args, options) {
       if (!internalChange) {
         changed = true;
       }
+      stateChangedResolve && stateChangedResolve();
+      stateChangedPromise = undefined;
       emitter.emit('change');
+      return true;
     }
+    return false;
   }
 
   function set(nextValue) {
@@ -399,6 +495,15 @@ function createState(initializer, args, options) {
     });
   }
 
+  function stateChanged() {
+    if (stateChangedPromise) {
+      return stateChangedPromise;
+    }
+    return (stateChangedPromise = new Promise((resolve) => {
+      stateChangedResolve = resolve;
+    }));
+  }
+
   Object.assign(set, {
     set,
     get,
@@ -407,6 +512,8 @@ function createState(initializer, args, options) {
     watch,
     state,
     next,
+    last,
+    changed: stateChanged,
   });
 
   api.state = state;
@@ -417,11 +524,13 @@ function createState(initializer, args, options) {
     get,
     reset,
     next,
+    last,
     subscribe,
     watch,
     map: mapState,
     reduce: reduceState,
     filter: filterState,
+    changed: stateChanged,
     options,
   });
 }
@@ -451,6 +560,31 @@ export function createEmitter() {
       eventListeners = {};
     },
   };
+}
+
+export function enableCancellableLogic(promise, token = {}) {
+  if (promise.__cancellable) {
+    Object.assign(token, promise.__cancellable);
+    return promise;
+  }
+
+  let isCancelled = false;
+
+  Object.assign(token, {
+    cancel() {
+      if (isCancelled) {
+        return;
+      }
+      isCancelled = true;
+    },
+    isCancelled() {
+      return isCancelled || (parent && parent.isCancelled());
+    },
+  });
+
+  return Object.assign(promise, token, {
+    __cancellable: token,
+  });
 }
 
 export function enableLoadableLogic(promise) {

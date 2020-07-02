@@ -90,6 +90,7 @@ interface Api<T> extends Setter<T> {
    */
   get: Getter<T>;
   next(...args): any;
+  last(...args): any;
   /**
    * listen state value changing
    * @param subscription
@@ -99,6 +100,12 @@ interface Api<T> extends Setter<T> {
     subscribable: {subscribe: Function},
     transform?: (...args: any[]) => T,
   ): State<T>;
+  changed(): Promise<T>;
+}
+
+export interface CancellableToken {
+  isCancelled(): boolean;
+  cancel(): void;
 }
 
 type Subscription = () => any;

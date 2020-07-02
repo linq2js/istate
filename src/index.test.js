@@ -1,7 +1,7 @@
 import state, {getStateList} from 'istate';
 
-const delay = (ms, value) =>
-  new Promise((resolve) => setTimeout(resolve, ms, value));
+const delay = (ms = 0, ...args) =>
+  new Promise((resolve) => setTimeout(resolve, ms, ...args));
 
 test('simple state', () => {
   const Count = state(0);
@@ -184,7 +184,7 @@ test('async api', async () => {
   expect(values).toEqual([2, 4]);
 });
 
-test('generator', () => {
+test('next() with sync generator', () => {
   const subscription = jest.fn();
   const stream = state(function* () {
     const next = yield 'first';
@@ -202,7 +202,7 @@ test('generator', () => {
   expect(subscription).toBeCalledTimes(2);
 });
 
-test('async generator', async () => {
+test('next() with async generator', async () => {
   const subscription = jest.fn();
   const stream = state(async function* () {
     await delay(10);
@@ -228,14 +228,14 @@ test('async generator', async () => {
   expect(subscription).toBeCalledTimes(3);
 });
 
-test('func', () => {
+test('next() with functional state', () => {
   const stream = state(() => (a, b) => a + b, {defaultValue: 1});
   expect(stream.get()).toBe(1);
   expect(stream.next(1, 2)).toBe(true);
   expect(stream.get()).toBe(3);
 });
 
-test('generator with child state', () => {
+test('next() with child state', () => {
   const parent = state(function* () {
     yield child1.get();
     yield child2.get();
@@ -250,6 +250,57 @@ test('generator with child state', () => {
   expect(parent.get()).toBe(3);
   parent.next();
   expect(parent.get()).toBe(2);
+});
+
+test('last() with sync generator', () => {
+  const subscription = jest.fn();
+  const stream = state(function* () {
+    const next = yield 'first';
+    yield next;
+    return next + '-third';
+  });
+  stream.subscribe(subscription);
+  expect(stream.get()).toBe('first');
+  expect(stream.last('second')).toBe('second-third');
+  expect(stream.get()).toBe('second-third');
+  expect(subscription).toBeCalledTimes(1);
+});
+
+test('last() with cancellable token', async () => {
+  const subscription = jest.fn();
+
+  const step1 = jest.fn();
+  const step2 = jest.fn();
+  const stream = state(async function* () {
+    const result = yield step1;
+    await delay(100);
+    yield step2;
+    return result;
+  });
+  stream.subscribe(subscription);
+  const cancellableToken = stream.last(100);
+  await delay(20);
+  cancellableToken.cancel();
+  expect(subscription).toBeCalledTimes(1);
+  expect(step1).toBeCalledTimes(1);
+  expect(step2).toBeCalledTimes(0);
+});
+
+test('last() with async generator', async () => {
+  const stream = state(async function* () {
+    await delay(10);
+    const next = yield 'first';
+    await delay(10);
+    yield next;
+    await delay(10);
+    return 'third';
+  });
+  const subscription = jest.fn();
+  stream.subscribe(subscription);
+  expect(await stream.get()).toBe('first');
+  expect(await stream.last('second')).toBe('third');
+  expect(await stream.get()).toBe('third');
+  expect(subscription).toBeCalledTimes(1);
 });
 
 test('map(mapper)', () => {
@@ -296,4 +347,26 @@ test('filter()', () => {
   expect(even.get()).toBe(4);
   original.set(3);
   expect(even.get()).toBe(4);
+});
+
+test('changed()', async () => {
+  const original = state(1);
+  const callback = jest.fn();
+  const listen = async () => {
+    while (true) {
+      await original.changed();
+      callback();
+    }
+  };
+  listen();
+  await delay(10);
+  original.set(2);
+  await delay(10);
+  original.set(3);
+  await delay();
+  expect(callback).toBeCalledTimes(2);
+});
+
+test('cancellable', () => {
+  const callableState = state();
 });

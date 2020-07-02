@@ -1,6 +1,6 @@
 {
   "name": "istate",
-  "version": "0.0.20",
+  "version": "0.0.22",
   "description": "A state management that is inspired on recoil",
   "main": "dist/index.js",
   "types": "src/index.d.ts",
