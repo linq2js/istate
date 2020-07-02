@@ -297,9 +297,7 @@ function createState(initializer, args, options) {
     iterator = undefined;
     childStateChangingListeners.forEach((unsubscribe) => unsubscribe());
     childStates.clear();
-    emitter.emit('change');
-    stateChangedResolve && stateChangedResolve();
-    stateChangedPromise = undefined;
+    notifyChange();
   }
 
   function processIteratorResult(nextValue) {
@@ -437,12 +435,17 @@ function createState(initializer, args, options) {
       if (!internalChange) {
         changed = true;
       }
-      stateChangedResolve && stateChangedResolve();
-      stateChangedPromise = undefined;
-      emitter.emit('change');
+      notifyChange();
       return true;
     }
     return false;
+  }
+
+  function notifyChange() {
+    stateChangedPromise = undefined;
+    stateChangedResolve && stateChangedResolve();
+    stateChangedResolve = undefined;
+    emitter.emit('change');
   }
 
   function set(nextValue) {
